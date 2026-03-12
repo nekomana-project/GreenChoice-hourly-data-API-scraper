@@ -1,0 +1,158 @@
+<!DOCTYPE html>
+<html lang="nl">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Mijn Greenchoice Dashboard</title>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <style>
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background-color: #f4f7f6;
+            color: #333;
+            text-align: center;
+            padding: 20px;
+        }
+        .container {
+            max-width: 1000px;
+            margin: 0 auto;
+            background: white;
+            padding: 30px;
+            border-radius: 10px;
+            box-shadow: 0 4px 15px rgba(0,0,0,0.1);
+        }
+        .upload-sectie {
+            background-color: #eef2f5;
+            border: 2px dashed #bdc3c7;
+            padding: 30px;
+            border-radius: 10px;
+            margin-bottom: 20px;
+        }
+        input[type="file"] {
+            font-size: 1.1em;
+            padding: 10px;
+            cursor: pointer;
+        }
+        .summary {
+            display: flex;
+            justify-content: space-around;
+            margin-top: 20px;
+            margin-bottom: 30px;
+            font-size: 1.2em;
+            font-weight: bold;
+        }
+        .box { padding: 15px; border-radius: 8px; width: 30%; }
+        .box-stroom { background: #ffebee; color: #c62828; }
+        .box-terug { background: #e8f5e9; color: #2e7d32; }
+        .box-gas { background: #e3f2fd; color: #1565c0; }
+        
+        /* Verberg het dashboard in het begin */
+        #dashboard { display: none; }
+    </style>
+</head>
+<body>
+
+    <div class="container">
+        <h1>⚡ Mijn Energieverbruik</h1>
+
+        <div class="upload-sectie">
+            <h3>📂 Laad je JSON data in</h3>
+            <p>Selecteer het <b>mijn_verbruik.json</b> bestand dat je met Python hebt gedownload.</p>
+            <input type="file" id="jsonUpload" accept=".json">
+        </div>
+
+        <div id="dashboard">
+            <div class="summary">
+                <div class="box box-stroom">Verbruik: <br><span id="tot-stroom">0</span> kWh</div>
+                <div class="box box-terug">Teruglevering: <br><span id="tot-terug">0</span> kWh</div>
+                <div class="box box-gas">Gas: <br><span id="tot-gas">0</span> m³</div>
+            </div>
+            <canvas id="mijnGrafiek" width="400" height="200"></canvas>
+        </div>
+    </div>
+
+    <script>
+        let grafiekInstantie = null; // We bewaren de grafiek zodat we hem kunnen updaten
+
+        // 1. Luister of er een bestand wordt gekozen
+        document.getElementById('jsonUpload').addEventListener('change', function(event) {
+            const file = event.target.files[0];
+            if (!file) return; // Stop als er geen bestand is
+
+            // 2. Gebruik de FileReader om lokaal bestanden te lezen
+            const reader = new FileReader();
+            reader.onload = function(e) {
+                try {
+                    // Zet de gelezen tekst om in een JavaScript Object (JSON)
+                    const data = JSON.parse(e.target.result);
+                    
+                    // Laat het dashboard zien en teken de grafiek!
+                    document.getElementById('dashboard').style.display = 'block';
+                    tekenDashboard(data);
+                } catch (error) {
+                    alert("Oeps! Het bestand kon niet goed gelezen worden. Is het een geldige JSON?");
+                    console.error(error);
+                }
+            };
+            
+            // Start het lezen als tekst
+            reader.readAsText(file);
+        });
+
+        // De functie die de data verwerkt en tekent
+        function tekenDashboard(data) {
+            const uren = [];
+            const stroomVerbruik = [];
+            const stroomTeruglevering = [];
+            const gasVerbruik = [];
+
+            let totaalStroom = 0;
+            let totaalTerug = 0;
+            let totaalGas = 0;
+
+            // Loop door onze gloednieuwe, schone array heen
+            data.forEach(uurData => {
+                const tijd = new Date(uurData["Timestamp"]).toLocaleTimeString('nl-NL', { hour: '2-digit', minute: '2-digit' });
+                uren.push(tijd);
+                
+                // Vul de arrays voor de grafiek
+                stroomVerbruik.push(uurData["Verbruik stroom"]);
+                stroomTeruglevering.push(Math.abs(uurData["Teruglevering stroom"]));
+                gasVerbruik.push(uurData["Gas verbruik"]);
+
+                // Omdat we de dagtotalen niet meer uit de ruwe API halen, tellen we ze hier gewoon even zelf op!
+                totaalStroom += (uurData["Verbruik stroom"] || 0);
+                totaalTerug += Math.abs(uurData["Teruglevering stroom"] || 0);
+                totaalGas += (uurData["Gas verbruik"] || 0);
+            });
+
+            // Vul de samenvattings-blokjes met onze zelf berekende totalen
+            document.getElementById('tot-stroom').innerText = totaalStroom.toFixed(2);
+            document.getElementById('tot-terug').innerText = totaalTerug.toFixed(2);
+            document.getElementById('tot-gas').innerText = totaalGas.toFixed(2);
+
+            if (grafiekInstantie) grafiekInstantie.destroy();
+
+            const ctx = document.getElementById('mijnGrafiek').getContext('2d');
+            grafiekInstantie = new Chart(ctx, {
+                type: 'bar',
+                data: {
+                    labels: uren,
+                    datasets: [
+                        { label: 'Stroom Verbruik (kWh)', data: stroomVerbruik, backgroundColor: 'rgba(231, 76, 60, 0.7)', yAxisID: 'y' },
+                        { label: 'Stroom Teruglevering (kWh)', data: stroomTeruglevering, backgroundColor: 'rgba(46, 204, 113, 0.7)', yAxisID: 'y' },
+                        { label: 'Gas Verbruik (m³)', data: gasVerbruik, type: 'line', borderColor: 'rgba(52, 152, 219, 1)', backgroundColor: 'rgba(52, 152, 219, 1)', borderWidth: 3, tension: 0.3, yAxisID: 'y1' }
+                    ]
+                },
+                options: {
+                    responsive: true,
+                    scales: {
+                        y: { type: 'linear', display: true, position: 'left', title: { display: true, text: 'Stroom (kWh)' } },
+                        y1: { type: 'linear', display: true, position: 'right', title: { display: true, text: 'Gas (m³)' }, grid: { drawOnChartArea: false } }
+                    }
+                }
+            });
+        }
+    </script>
+</body>
+</html>

@@ -1,0 +1,12 @@
+# Negeer geheime variabelen
+.env
+
+# Negeer Python cache bestanden
+__pycache__/
+
+# Negeer gegenereerde data en geheugen
+*.csv
+gemiste_dagen.json
+
+# Negeer lokale Windows taakplanner scripts
+start_scraper.bat
