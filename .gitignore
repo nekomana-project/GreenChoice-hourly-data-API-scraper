@@ -6,7 +6,7 @@ __pycache__/
 
 # Negeer gegenereerde data en geheugen
 *.csv
-gemiste_dagen.json
+*.json
 
 # Negeer lokale Windows taakplanner scripts
 start_scraper.bat
