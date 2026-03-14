@@ -2,7 +2,6 @@ import tkinter as tk
 from tkinter import ttk, messagebox
 import threading
 import queue
-import csv
 import smtplib
 import os
 from datetime import datetime, timedelta
@@ -13,6 +12,13 @@ from dotenv import load_dotenv
 
 # Laad de omgevingsvariabelen uit .env
 load_dotenv()
+
+# --- NIEUW: Nederlandse maanden vertaling ---
+DUTCH_MONTHS = {
+    1: "januari", 2: "februari", 3: "maart", 4: "april", 
+    5: "mei", 6: "juni", 7: "juli", 8: "augustus", 
+    9: "september", 10: "oktober", 11: "november", 12: "december"
+}
 
 class GreenchoiceApp:
     def __init__(self, root):
@@ -347,21 +353,63 @@ class GreenchoiceApp:
     # --- OPSLAAN EN MAILEN ---
     def sla_csv_op(self):
         if not self.opgehaalde_data: return
-        
-        if self.start_str == self.eind_str:
-            bestandsnaam = f"verbruik_{self.start_str}.csv"
-        else:
-            bestandsnaam = f"verbruik_{self.start_str}_tm_{self.eind_str}.csv"
 
+        def format_num(num):
+            if num == 0: return "0"
+            s = f"{num:.2f}".rstrip('0').rstrip('.')
+            return s if s else "0"
+        
+        start_dt = datetime.strptime(self.start_str, "%Y-%m-%d")
+        
+        week_nummer = start_dt.isocalendar()[1]
+        var_name = f"meting_w{week_nummer:02d}_{start_dt.year}"
+        
+        data_per_dag = {}
+        for rij in self.opgehaalde_data:
+            dt = datetime.strptime(rij["Timestamp"][:19], "%Y-%m-%dT%H:%M:%S")
+            dag_str = dt.strftime("%Y-%m-%d")
+            
+            if dag_str not in data_per_dag:
+                data_per_dag[dag_str] = {'uren': [], 'totaal_in': 0.0, 'totaal_uit': 0.0}
+                
+            stroom_in = float(rij["Verbruik stroom"])
+            stroom_uit = abs(float(rij["Teruglevering stroom"]))
+            
+            data_per_dag[dag_str]['totaal_in'] += stroom_in
+            data_per_dag[dag_str]['totaal_uit'] += stroom_uit
+            data_per_dag[dag_str]['uren'].append((dt.hour, stroom_in, stroom_uit))
+
+        lijnen = [f"const {var_name} = ["]
+        for dag_str in sorted(data_per_dag.keys()):
+            dag_data = data_per_dag[dag_str]
+            dt = datetime.strptime(dag_str, "%Y-%m-%d")
+            
+            t_in = dag_data['totaal_in']
+            t_uit = dag_data['totaal_uit']
+            t_netto = t_in - t_uit
+            
+            t_uit_str = f"-{format_num(t_uit)}" if t_uit > 0 else "0"
+            
+            lijnen.append(f'"verbruik/uur op {dt.day}-{dt.month}: {format_num(t_in)}/{t_uit_str}/{format_num(t_netto)}",')
+            
+            for uur, s_in, s_uit in sorted(dag_data['uren'], key=lambda x: x[0]):
+                lijnen.append(f'"{uur}/{format_num(s_in)}/{format_num(s_uit)}",')
+                
+        lijnen.append("];")
+
+        # Veilige .txt bestandsnaam
+        # maand_naam = DUTCH_MONTHS[start_dt.month]
+        bestandsnaam = f"GreenChoice_kWh_{start_dt.year}_week{week_nummer:02d}_uur_dag.txt"
+        
         try:
-            with open(bestandsnaam, "w", newline="", encoding="utf-8") as csvfile:
-                writer = csv.DictWriter(csvfile, fieldnames=["Timestamp", "Verbruik stroom", "Teruglevering stroom", "Gas verbruik"])
-                writer.writeheader()
-                writer.writerows(self.opgehaalde_data)
+            with open(bestandsnaam, "w", encoding="utf-8") as f:
+                f.write("\n".join(lijnen))
+            
             self.update_status(f"✅ Opgeslagen als {bestandsnaam}")
-            messagebox.showinfo("Succes", f"Bestand {bestandsnaam} is succesvol opgeslagen.")
+            messagebox.showinfo("Succes", f"Bestand is succesvol opgeslagen!")
         except Exception as e:
-            self.update_status("❌ Fout bij opslaan CSV.")
+            self.update_status("❌ Fout bij opslaan bestand.")
+            print(f"Save error: {e}")
 
     def stuur_email_thread(self):
         self.btn_mail.config(state="disabled")
@@ -372,27 +420,65 @@ class GreenchoiceApp:
     def verstuur_mail_logica(self):
         conf = self.get_config()
         
-        if self.start_str == self.eind_str:
-            bestandsnaam = f"verbruik_{self.start_str}.csv"
-            subject = f'📊 Export Greenchoice ({self.start_str})'
-            content = f"Hoi!\n\nHierbij de data van {self.start_str}.\n\nGroeten!"
-        else:
-            bestandsnaam = f"verbruik_{self.start_str}_tm_{self.eind_str}.csv"
-            subject = f'📊 Export Greenchoice ({self.start_str} t/m {self.eind_str})'
-            content = f"Hoi!\n\nHierbij de data van {self.start_str} tot en met {self.eind_str}.\n\nGroeten!"
+        subject = f'📊 Export Greenchoice ({self.start_str} t/m {self.eind_str})'
+        content = f"Hoi!\n\nHierbij de data van {self.start_str} tot en met {self.eind_str}.\n(Het bestand eindigt op .txt zodat Gmail het accepteert, maar bevat de gevraagde JS array!)\n\nGroeten!"
+
+        def format_num(num):
+            if num == 0: return "0"
+            s = f"{num:.2f}".rstrip('0').rstrip('.')
+            return s if s else "0"
 
         try:
-            with open(bestandsnaam, "w", newline="", encoding="utf-8") as csvfile:
-                writer = csv.DictWriter(csvfile, fieldnames=["Timestamp", "Verbruik stroom", "Teruglevering stroom", "Gas verbruik"])
-                writer.writeheader(); writer.writerows(self.opgehaalde_data)
+            start_dt = datetime.strptime(self.start_str, "%Y-%m-%d")
+            
+            week_nummer = start_dt.isocalendar()[1]
+            var_name = f"meting_w{week_nummer:02d}_{start_dt.year}"
+            
+            data_per_dag = {}
+            for rij in self.opgehaalde_data:
+                dt = datetime.strptime(rij["Timestamp"][:19], "%Y-%m-%dT%H:%M:%S")
+                dag_str = dt.strftime("%Y-%m-%d")
+                
+                if dag_str not in data_per_dag:
+                    data_per_dag[dag_str] = {'uren': [], 'totaal_in': 0.0, 'totaal_uit': 0.0}
+                    
+                stroom_in = float(rij["Verbruik stroom"])
+                stroom_uit = abs(float(rij["Teruglevering stroom"]))
+                
+                data_per_dag[dag_str]['totaal_in'] += stroom_in
+                data_per_dag[dag_str]['totaal_uit'] += stroom_uit
+                data_per_dag[dag_str]['uren'].append((dt.hour, stroom_in, stroom_uit))
 
+            lijnen = [f"const {var_name} = ["]
+            for dag_str in sorted(data_per_dag.keys()):
+                dag_data = data_per_dag[dag_str]
+                dt = datetime.strptime(dag_str, "%Y-%m-%d")
+                
+                t_in = dag_data['totaal_in']
+                t_uit = dag_data['totaal_uit']
+                t_netto = t_in - t_uit
+                
+                t_uit_str = f"-{format_num(t_uit)}" if t_uit > 0 else "0"
+                lijnen.append(f'"verbruik/uur op {dt.day}-{dt.month}: {format_num(t_in)}/{t_uit_str}/{format_num(t_netto)}",')
+                
+                for uur, s_in, s_uit in sorted(dag_data['uren'], key=lambda x: x[0]):
+                    lijnen.append(f'"{uur}/{format_num(s_in)}/{format_num(s_uit)}",')
+            lijnen.append("];")
+
+            bestandsnaam = f"GreenChoice_kWh_{start_dt.year}_week{week_nummer:02d}_uur_dag.txt"
+            
+            with open(bestandsnaam, "w", encoding="utf-8") as f:
+                f.write("\n".join(lijnen))
+
+            # Mail versturen
             msg = EmailMessage()
             msg['Subject'] = subject
-            msg['From'] = conf["sender"]; msg['To'] = conf["recipient"]
+            msg['From'] = conf["sender"]
+            msg['To'] = conf["recipient"]
             msg.set_content(content)
             
             with open(bestandsnaam, 'rb') as f:
-                msg.add_attachment(f.read(), maintype='text', subtype='csv', filename=bestandsnaam)
+                msg.add_attachment(f.read(), maintype='text', subtype='plain', filename=bestandsnaam)
 
             with smtplib.SMTP_SSL('smtp.gmail.com', 465) as smtp:
                 smtp.login(conf["sender"], conf["sender_pass"])
@@ -400,10 +486,14 @@ class GreenchoiceApp:
             
             self.update_status("✅ Succesvol gemaild!")
             self.root.after(0, self.clean_mail_entries)
-            if os.path.exists(bestandsnaam): os.remove(bestandsnaam)
+            
+            if os.path.exists(bestandsnaam): 
+                os.remove(bestandsnaam)
+                    
         except Exception as e:
             self.update_status("❌ Fout bij verzenden (zie terminal).")
             print(f"Mail error: {e}")
+            
         self.reset_ui()
 
 if __name__ == "__main__":
