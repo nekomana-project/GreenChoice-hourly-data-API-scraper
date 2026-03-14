@@ -10,7 +10,7 @@ __pycache__/
 *.spec
 
 # Negeer lokale Windows taakplanner scripts
-start_scraper.bat
+*.bat
 
 dist/*
 build/*
